@@ -1,4 +1,4 @@
-# Created by Will Furnell (willfurnell@me.com) for the OpenNIC Project.
+# Created by Will Furnell for the OpenNIC Project.
 
 #!/usr/bin/python
 # Required imports
