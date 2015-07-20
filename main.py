@@ -1,12 +1,12 @@
-# Created by Will Furnell for the OpenNIC Project.
+# Created by Will Furnell
 
 #!/usr/bin/python
 # Required imports
 import socketserver
-from ldap3 import *
 import time
 import sqlite3
 import configparser
+from ldap3 import *
 
 # Get required information from the configuration file
 config = configparser.ConfigParser()
@@ -14,39 +14,23 @@ config.sections()
 config.read('config.ini')  # The configuration file containing all nessasary options.
 
 
-#Let the user know what is happening
+# Let the user know what is happening
 print("Starting OpenNIC WHOIS Server (LDAP Backend) " + config['info']['version'] + " (Python)")
 
-###
-# Error codes, used for debugging/troubleshooting: [Not currently in use]
-# E: 00 - Unknown
-# E: 01 - DNS Error, name could not be found in DNS
-# E: 02 - LDAP Error, name could not be found in LDAP database
-# E: 03 - LDAP Error, could not connect to LDAP server
-# E: 04 - Internal Error, could not bind to port
-###
 
-#Useful functions for modifying outputs
+# Useful functions for modifying outputs
+
+def getUID(result):  # Remove extra info from user UID (Used in searching)
+        return str(result).replace("uid=", '').replace(",o=users,dc=opennic,dc=glue", '')
 
 
-def nb(result):  # Remove brackets from search result
-        return str(result).replace("['", '').replace("']", '')
+def censoremail(result):
+    if "@" in result:
+        email = result.replace("@", ' AT ')
+    else:
+        email = result
 
-
-def ndc(result):  # Remove extra info from user UID (Used in searching)
-        return str(result).replace("['uid=", '').replace(",o=users,dc=opennic,dc=glue']", '')
-
-def nb_sql(result): # Remove brackets from IP address
-    return str(result).replace("('", '').replace("',)", '')
-
-
-
-def converttimestamp(timestamp):
-
-    #Set up original timestamp
-    timestamp_native = time.strptime(timestamp, '%Y%m%d%H%M%SZ')
-    #Output human readable timestamp
-    return time.strftime('%Y-%m-%d', timestamp_native)
+    return email
 
 # All the possible T1 servers. This is for showing the registrar in the output. If there are ever more than 25,
 # just add more to the array. (now in config file)
@@ -54,8 +38,8 @@ on_registrars = config['main']['t1s']
 
 ip = []
 
-#The main whois server code can be found here. Sorry, not very pretty - but it gets the job done.
 
+# The main WHOIS server
 
 class WhoisServer(socketserver.BaseRequestHandler):
     """
@@ -66,38 +50,38 @@ class WhoisServer(socketserver.BaseRequestHandler):
     client.
     """
 
-    #All data sent to the client must be .encode() because you can only send bytes, not strings.
-    #Not very pretty, but that's the best I can do for now.
-
     # A simple not in registry message
     def notfound(self):
-        self.request.sendall(('Error! Not found in OpenNIC registry!\
+        self.s('Error! Not found in OpenNIC registry!\
                             \nOnly .OSS, .PARODY. TEST, .PIRATE, .KEY and .P2P domains are currently part of this service.\
                             \nICANN domains cannot be queried using this service.\
-                            \nFor more information on OpenNIC Whois, please see ' + config['info']['domain'] + '\n').encode())
+                            \nFor more information on OpenNIC Whois, please see ' + config['info']['domain'] + '\n')
 
     # Disclaimer message for those doing queries.
-    def print_disclaimer(self):
-        self.request.sendall(('Whois Server Version BETA (' + config['info']['domain'] + ')\
+    def top_disclaimer(self):
+        self.s('Whois Server (' + config['info']['domain'] + ')\
                             \nWelcome to the OpenNIC Registry!\
                             \nThe following information is presented in the hopes that it will be useful, but OpenNIC\
                             \nmakes ABSOLUTELY NO GUARANTEE as to its accuracy. For more information please visit\
-                            \nwww.opennic.glue or www.opennicproject.org.\n\n').encode())
+                            \nwww.opennic.glue or www.opennicproject.org.\n\n')
     # Offline message
     def offline(self):
-        self.request.sendall(('ERROR:\
-                            \nOpenNIC Whois Service Offline Temporarily. Please try again later.\
-                            \n\n').encode())
+        self.s('ERROR:\
+                \nOpenNIC Whois Service Offline Temporarily. Please try again later.\
+                \n\n')
 
     # Lower disclaimer
-    def disclaimer2(self):
-        self.request.sendall(('\n\nNOTE: THE WHOIS DATABASE IS A CONTACT DATABASE ONLY. LACK OF A DOMAIN\n'
-                             'RECORD DOES NOT SIGNIFY DOMAIN AVAILABILITY.').encode())
+    def bottom_disclaimer(self):
+        self.s('\n\nNOTE: THE WHOIS DATABASE IS A CONTACT DATABASE ONLY. LACK OF A DOMAIN\n'
+                'RECORD DOES NOT SIGNIFY DOMAIN AVAILABILITY.')
 
     # Queries exceeded message
     def exceeded(self):
-        self.request.sendall(('\n\nERROR: Maximum requests exceeded for today!\n'
-                             'See the limits at ' + config['info']['limiturl']).encode())
+        self.s('\n\nERROR: Maximum requests exceeded for today!\n'
+                'See the limits at ' + config['info']['limiturl'])
+
+    def s(self, string):
+        self.request.sendall(string.encode())
 
     # Where the bulk of the program occours.
     def handle(self):
@@ -119,7 +103,7 @@ class WhoisServer(socketserver.BaseRequestHandler):
 
         cursor = db.cursor()
 
-        ip = (nb_sql(self.client_address[0]))
+        ip = self.client_address[0]
 
         numqueries = 1  # Initialise variable
 
@@ -137,7 +121,7 @@ class WhoisServer(socketserver.BaseRequestHandler):
             db.commit()
 
         #Output TOS
-        self.print_disclaimer()
+        self.top_disclaimer()
 
         reginfo = ""
         manager = ""
@@ -162,16 +146,16 @@ class WhoisServer(socketserver.BaseRequestHandler):
                          'dateExpiration', 'createTimestamp', 'modifyTimestamp', 'zoneDisabled', 'creatorsName'])
                 result = c.response
                 print("Connection successful, search performed")
-            except LDAPException:
+            except LDAPException as e:
                 #Got to exit, as without a backend, the server is useless
                 result = ""
                 self.offline()
-                print("Connection & search FAILED")
-            except OSError:
+                print("Connection & search FAILED: " + str(e))
+            except OSError as e2:
                 #Got to exit, as without a backend, the server is useless.
                 result = ""
                 self.offline()
-                print("Connection & search FAILED")
+                print("Connection & search FAILED: " + str(e2))
 
             # Give the output if applicable
 
@@ -180,54 +164,58 @@ class WhoisServer(socketserver.BaseRequestHandler):
                 #Main output
                 for r in result:
                     #Set up manager variable, makes things neater later on
-                    manager = ndc(r['attributes']['manager'])
-                    reginfoname = ndc(r['attributes']['creatorsName']).lower()
+                    manager = getUID(r['attributes']['manager'][0])
+                    reginfoname = getUID(r['attributes']['creatorsName'])
 
-                    if reginfoname in on_registrars:
+
+                    if reginfoname.lower() in on_registrars:
                         reginfo = reginfoname + ".opennic.glue"
+                    elif reginfoname == "cn=root,dc=opennic,dc=glue":
+                        reginfo = "OpenNIC"
                     else:
-                        reginfo = ndc(r['attributes']['creatorsName'])
+                        reginfo = getUID(r['attributes']['creatorsName'][0])
 
                     #Here's the fun part - output to the user
-                    self.request.sendall(('Domain Name: ' + nb(r['attributes']['associatedDomain']) + '\n').encode())
-                    self.request.sendall(('Domain Registered: ' + converttimestamp(nb(r['attributes']['createTimestamp'])) + '\n').encode())
-                    self.request.sendall(('Domain Modified: ' + converttimestamp(nb(r['attributes']['modifyTimestamp'])) + '\n').encode())
+                    self.s('Domain Name: ' + r['attributes']['associatedDomain'][0] + '\n')
+                    self.s('Domain Registered: ' + str(r['attributes']['createTimestamp']) + '\n')
+                    self.s('Domain Modified: ' + str(r['attributes']['modifyTimestamp']) + '\n')
                     try:
-                        self.request.sendall(('Domain Expires: ' + converttimestamp(nb(r['attributes']['dateExpiration'])) + '\n').encode())
+                        self.s('Domain Expires: ' + str(r['attributes']['dateExpiration']) + '\n')
                     except KeyError:
-                        self.request.sendall(('Domain Expires: Never \n').encode())
+                        self.s('Domain Expires: Never \n')
                     #Attribute may be blank, so assume OK if it is
                     try:
                         test = r['attributes']['zoneDisabled']
-                        if nb(r['attributes']['zoneDisabled']) == "TRUE":
-                            self.request.sendall('Status:  Disabled\n'.encode())
+                        if r['attributes']['zoneDisabled'] == "TRUE":
+                            self.s('Status:  Disabled\n')
                         else:
-                            self.request.sendall('Status: OK \n'.encode())
+                            self.s('Status: OK \n')
                     except KeyError:
-                        self.request.sendall('Status: OK \n'.encode())
+                        self.s('Status: OK \n')
 
                     #Get user information from DB
                 try:
                     #c2 = Connection(s, auto_bind=True, client_strategy=STRATEGY_SYNC, user=config['ldap']['user_dn'], password=config['ldap']['password'])
                     c.search(search_base='o=users,dc=opennic,dc=glue', search_filter='(uid=' + manager + ')', search_scope=SEARCH_SCOPE_WHOLE_SUBTREE, attributes = ['cn', 'mail'])
                     user_result = c.response
-                    c.close()
-                except e:
+                    #c.close()
+                except:
                     #Got to exit, as without a backend, the server is useless
                     user_result = ""
-                    print("Connection & search for user FAILED, falling back to Unknown" + e.strerror)
+                    print("Connection & search for user FAILED, falling back to Unknown")
 
                 #Was there any user info?
                 if user_result:
                     for ur in user_result:
-                        self.request.sendall(('Registrant: ' + nb(ur['attributes']['cn']) + '\n').encode())
-                        self.request.sendall(('Registrant Contact: ' + nb(ur['attributes']['mail']) + '\n').encode())
+                        self.s('Registrant: ' + ur['attributes']['cn'][0] + '\n')
+                        self.s('Registrant Contact: ' + censoremail(ur['attributes']['mail'][0]) + '\n')
                 else:
-                    self.request.sendall('Registrant: Unknown\n'.encode())
-                    self.request.sendall('INFO: Domain could be abandoned! \n'.encode())
+                    self.s('Registrant: Unknown\n')
+                    self.s('Registrant: Domain could be abandoned! \n')
+                    self.s('Registrant Contact: OpenNIC \n')
 
                 #Extra info
-                self.request.sendall(('Registrar: ' + reginfo + '\n').encode())
+                self.s('Registrar: ' + reginfo + '\n')
 
             else:
                 #Give a not found error
@@ -235,7 +223,7 @@ class WhoisServer(socketserver.BaseRequestHandler):
         else:
             self.exceeded()
         #Output lower disclaimer
-        self.disclaimer2()
+        self.bottom_disclaimer()
 
         db.commit()
 if __name__ == "__main__":
@@ -249,4 +237,4 @@ if __name__ == "__main__":
         server.serve_forever()
     except OSError as e:
         #Port is probably already bound. Error nicely.
-        print('E: 04: Error! ' + e.strerror)
+        print('OS Error: ' + e.strerror)
